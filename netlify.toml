@@ -1,0 +1,5 @@
+[build.environment]
+  # The Firebase web API key in firebase-applet-config.json is public by design
+  # (it ships in the client bundle), but Netlify's smart secret detection flags it.
+  # Scanning for the site's own environment variable values remains enabled.
+  SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"
