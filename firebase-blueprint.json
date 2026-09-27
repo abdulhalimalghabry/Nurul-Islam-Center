@@ -1,0 +1,265 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile with role authentication",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "fullName": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 25 },
+        "role": { "type": "string", "enum": ["student", "admin"] },
+        "guardianRelation": { "type": "string", "maxLength": 60 },
+        "gender": { "type": "string", "enum": ["male", "female"] },
+        "address": { "type": "string", "maxLength": 200 },
+        "authProvider": { "type": "string", "enum": ["google", "password"] },
+        "profileCompleted": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "fullName", "email", "role", "createdAt"]
+    },
+    "Application": {
+      "title": "Application",
+      "description": "Student registration application",
+      "type": "object",
+      "properties": {
+        "applicationId": { "type": "string", "maxLength": 128 },
+        "applicationNumber": { "type": "string", "maxLength": 30 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "studentName": { "type": "string", "maxLength": 100 },
+        "studentNameEn": { "type": "string", "maxLength": 100 },
+        "dateOfBirth": { "type": "string", "maxLength": 20 },
+        "gender": { "type": "string", "enum": ["male", "female"] },
+        "nationality": { "type": "string", "maxLength": 50 },
+        "nationalId": { "type": "string", "maxLength": 50 },
+        "phone": { "type": "string", "maxLength": 25 },
+        "email": { "type": "string", "maxLength": 150 },
+        "address": { "type": "string", "maxLength": 200 },
+        "parentName": { "type": "string", "maxLength": 100 },
+        "parentPhone": { "type": "string", "maxLength": 25 },
+        "parentRelationship": { "type": "string", "maxLength": 50 },
+        "stageId": { "type": "string", "maxLength": 50 },
+        "targetGrade": { "type": "string", "maxLength": 50 },
+        "classId": { "type": "string", "maxLength": 50 },
+        "previousSchool": { "type": "string", "maxLength": 100 },
+        "previousGrade": { "type": "string", "maxLength": 50 },
+        "lastAcademicResult": { "type": "string", "maxLength": 50 },
+        "hasPreviousStudyInCenter": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "documents": { "type": "object" },
+        "status": { "type": "string", "enum": ["draft", "submitted", "under_review", "accepted", "rejected", "needs_correction"] },
+        "adminNotes": { "type": "string", "maxLength": 1000 },
+        "rejectionReason": { "type": "string", "maxLength": 500 },
+        "assignedClassId": { "type": "string", "maxLength": 50 },
+        "assignedClassName": { "type": "string", "maxLength": 100 },
+        "submittedAt": { "type": "string" },
+        "reviewedAt": { "type": "string" },
+        "reviewedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["applicationNumber", "userId", "studentName", "status", "createdAt"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Accepted registered student",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string", "maxLength": 50 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "applicationId": { "type": "string", "maxLength": 128 },
+        "fullName": { "type": "string", "maxLength": 100 },
+        "dateOfBirth": { "type": "string", "maxLength": 20 },
+        "gender": { "type": "string", "enum": ["male", "female"] },
+        "nationality": { "type": "string", "maxLength": 50 },
+        "nationalId": { "type": "string", "maxLength": 50 },
+        "phone": { "type": "string", "maxLength": 25 },
+        "parentName": { "type": "string", "maxLength": 100 },
+        "parentPhone": { "type": "string", "maxLength": 25 },
+        "stageId": { "type": "string", "maxLength": 50 },
+        "stageName": { "type": "string", "maxLength": 100 },
+        "grade": { "type": "string", "maxLength": 50 },
+        "classId": { "type": "string", "maxLength": 50 },
+        "className": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["active", "suspended", "graduated"] },
+        "photoUrl": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["studentId", "userId", "fullName", "stageId", "classId", "status", "createdAt"]
+    },
+    "Class": {
+      "title": "Class",
+      "description": "Academic classroom definition",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "grade": { "type": "string", "maxLength": 50 },
+        "stageId": { "type": "string", "maxLength": 50 },
+        "stageName": { "type": "string", "maxLength": 100 },
+        "capacity": { "type": "number" },
+        "currentStudents": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["name", "grade", "stageId", "capacity", "currentStudents", "isActive"]
+    },
+    "Stage": {
+      "title": "Stage",
+      "description": "Educational stage category",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 300 },
+        "grades": { "type": "string", "maxLength": 200 },
+        "isActive": { "type": "boolean" },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["name", "isActive"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "User notification item",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "message": { "type": "string", "maxLength": 500 },
+        "type": { "type": "string", "enum": ["info", "success", "warning", "danger"] },
+        "isRead": { "type": "boolean" },
+        "link": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "title", "message", "type", "isRead", "createdAt"]
+    },
+    "AdminLog": {
+      "title": "AdminLog",
+      "description": "Audit log for administrative operations",
+      "type": "object",
+      "properties": {
+        "adminId": { "type": "string", "maxLength": 128 },
+        "adminEmail": { "type": "string", "maxLength": 150 },
+        "action": { "type": "string", "maxLength": 100 },
+        "targetId": { "type": "string", "maxLength": 128 },
+        "targetType": { "type": "string", "maxLength": 50 },
+        "description": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["adminId", "action", "description", "createdAt"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Center global settings and configurations",
+      "type": "object",
+      "properties": {
+        "centerName": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "email": { "type": "string", "maxLength": 150 },
+        "address": { "type": "string", "maxLength": 200 },
+        "registrationOpen": { "type": "boolean" },
+        "maxApplications": { "type": "number" },
+        "academicYear": { "type": "string", "maxLength": 50 },
+        "announcement": { "type": "string", "maxLength": 500 },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["centerName", "registrationOpen"]
+    },
+    "Banner": {
+      "title": "Banner",
+      "description": "Dynamic announcement and hero banner slide for the homepage",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 600 },
+        "badgeText": { "type": "string", "maxLength": 80 },
+        "imageUrl": { "type": "string" },
+        "mobileImageUrl": { "type": "string" },
+        "displayType": { "type": "string", "enum": ["image_with_text", "image_only"] },
+        "objectPosition": { "type": "string", "enum": ["center", "top", "bottom", "right", "left"] },
+        "buttonText": { "type": "string", "maxLength": 80 },
+        "buttonLink": { "type": "string", "maxLength": 500 },
+        "linkType": { "type": "string", "enum": ["internal", "external"] },
+        "order": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "startDate": { "type": "string", "maxLength": 30 },
+        "endDate": { "type": "string", "maxLength": 30 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["imageUrl", "displayType", "order", "isActive"]
+    },
+    "HeroSlide": {
+      "title": "HeroSlide",
+      "description": "Main visual hero slider item for the homepage",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "description": { "type": "string", "maxLength": 600 },
+        "desktopImageUrl": { "type": "string" },
+        "mobileImageUrl": { "type": "string" },
+        "buttonText": { "type": "string", "maxLength": 80 },
+        "link": { "type": "string", "maxLength": 500 },
+        "linkType": { "type": "string", "enum": ["internal", "external"] },
+        "contentType": { "type": "string", "maxLength": 60 },
+        "objectPosition": { "type": "string", "enum": ["center", "top", "bottom", "left", "right"] },
+        "order": { "type": "number" },
+        "isPublished": { "type": "boolean" },
+        "isFeatured": { "type": "boolean" },
+        "startDate": { "type": "string", "maxLength": 30 },
+        "endDate": { "type": "string", "maxLength": 30 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "createdBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["desktopImageUrl", "contentType", "order", "isPublished"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/applications/{applicationId}": {
+      "schema": "Application",
+      "description": "Student registration applications"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Enrolled student records"
+    },
+    "/classes/{classId}": {
+      "schema": "Class",
+      "description": "Classrooms and capacity"
+    },
+    "/stages/{stageId}": {
+      "schema": "Stage",
+      "description": "Academic stages"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "In-app notifications"
+    },
+    "/adminLogs/{logId}": {
+      "schema": "AdminLog",
+      "description": "Administrative actions audit log"
+    },
+    "/settings/center": {
+      "schema": "Setting",
+      "description": "Global center settings"
+    },
+    "/banners/{bannerId}": {
+      "schema": "Banner",
+      "description": "Homepage dynamic announcements and banners"
+    },
+    "/heroSlides/{slideId}": {
+      "schema": "HeroSlide",
+      "description": "Main visual hero slider slides for the homepage"
+    }
+  }
+}

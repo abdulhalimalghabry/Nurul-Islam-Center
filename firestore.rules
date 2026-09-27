@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null && (
+        request.auth.uid == '5BSXFscriahrJ4npUvT4GOWJQbo1' ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    // Main Visual Hero Slides collection: Public read, Admin-only write
+    match /heroSlides/{slideId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // Applications collection
+    match /applications/{applicationId} {
+      allow read, write: if true;
+    }
+
+    // Students collection
+    match /students/{studentId} {
+      allow read, write: if true;
+    }
+
+    // Classes collection
+    match /classes/{classId} {
+      allow read, write: if true;
+    }
+
+    // Stages collection
+    match /stages/{stageId} {
+      allow read, write: if true;
+    }
+
+    // Notifications collection
+    match /notifications/{notificationId} {
+      allow read, write: if true;
+    }
+
+    // Settings collection
+    match /settings/{settingId} {
+      allow read, write: if true;
+    }
+
+    // Admin audit logs
+    match /adminLogs/{logId} {
+      allow read, write: if true;
+    }
+
+    // Admins marker collection
+    match /admins/{adminId} {
+      allow read, write: if true;
+    }
+
+    // Dynamic Announcements & Banners collection
+    match /banners/{bannerId} {
+      allow read, write: if true;
+    }
+
+    // Fallback for any other document paths
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

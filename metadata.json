@@ -1,0 +1,6 @@
+{
+  "name": "مركز نور الإسلام",
+  "description": "منصة إلكترونية متكاملة لإدارة مركز نور الإسلام وتسجيل وقبول الطلاب وتوزيع الفصول",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
