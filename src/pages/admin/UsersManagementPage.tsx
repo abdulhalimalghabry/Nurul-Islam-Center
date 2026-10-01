@@ -14,7 +14,7 @@ import {
   Phone,
   MapPin,
 } from 'lucide-react';
-import { BOOTSTRAP_ADMIN_EMAIL, BOOTSTRAP_ADMIN_UID } from '../../context/AuthContext';
+import { hashPassword } from '../../context/AuthContext';
 import { formatDateArabic } from '../../utils/helpers';
 
 export const UsersManagementPage: React.FC = () => {
@@ -22,6 +22,7 @@ export const UsersManagementPage: React.FC = () => {
   const [search, setSearch] = useState('');
   const [newAdminIdentifier, setNewAdminIdentifier] = useState('');
   const [newAdminName, setNewAdminName] = useState('');
+  const [newAdminPass, setNewAdminPass] = useState('');
   const [addingAdmin, setAddingAdmin] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -72,6 +73,9 @@ export const UsersManagementPage: React.FC = () => {
     if (!raw) return;
     setAddingAdmin(true);
     try {
+      const passwordHash = newAdminPass.trim()
+        ? await hashPassword(newAdminPass.trim())
+        : undefined;
       const isEmail = raw.includes('@');
       if (isEmail) {
         const cleanEmail = raw.toLowerCase();
@@ -89,6 +93,7 @@ export const UsersManagementPage: React.FC = () => {
             email: cleanEmail,
             fullName: newAdminName.trim() || 'مدير النظام',
             role: 'admin',
+            ...(passwordHash ? { passwordHash } : {}),
             createdAt: serverTimestamp(),
           },
           { merge: true }
@@ -96,17 +101,28 @@ export const UsersManagementPage: React.FC = () => {
 
         const existing = users.find((u) => u.email?.toLowerCase().trim() === cleanEmail);
         if (existing) {
-          await updateDoc(doc(db, 'users', existing.uid), {
-            role: 'admin',
-            updatedAt: serverTimestamp(),
-          });
+          await setDoc(
+            doc(db, 'users', existing.uid),
+            {
+              role: 'admin',
+              ...(passwordHash ? { passwordHash } : {}),
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
           await setDoc(
             doc(db, 'admins', existing.uid),
-            { uid: existing.uid, email: cleanEmail, role: 'admin', createdAt: serverTimestamp() },
+            {
+              uid: existing.uid,
+              email: cleanEmail,
+              role: 'admin',
+              ...(passwordHash ? { passwordHash } : {}),
+              createdAt: serverTimestamp(),
+            },
             { merge: true }
           );
         }
-        setSuccessMsg(`تم اعتماد البريد (${cleanEmail}) كحساب إدارة بنجاح.`);
+        setSuccessMsg(`تم حفظ واعتماد حساب الإدارة (${cleanEmail}) في قاعدة البيانات بنجاح.`);
       } else {
         const targetUid = raw;
         await setDoc(
@@ -115,6 +131,7 @@ export const UsersManagementPage: React.FC = () => {
             uid: targetUid,
             fullName: newAdminName.trim() || 'مدير النظام',
             role: 'admin',
+            ...(passwordHash ? { passwordHash } : {}),
             createdAt: serverTimestamp(),
           },
           { merge: true }
@@ -126,15 +143,17 @@ export const UsersManagementPage: React.FC = () => {
             ...(newAdminName.trim() ? { fullName: newAdminName.trim() } : {}),
             role: 'admin',
             profileCompleted: true,
+            ...(passwordHash ? { passwordHash } : {}),
             updatedAt: serverTimestamp(),
           },
           { merge: true }
         );
-        setSuccessMsg(`تم اعتماد المعرف (${targetUid}) كحساب إدارة بنجاح.`);
+        setSuccessMsg(`تم حفظ واعتماد المعرف (${targetUid}) في قاعدة البيانات بنجاح.`);
       }
 
       setNewAdminIdentifier('');
       setNewAdminName('');
+      setNewAdminPass('');
       setTimeout(() => setSuccessMsg(''), 4000);
     } finally {
       setAddingAdmin(false);
@@ -150,6 +169,8 @@ export const UsersManagementPage: React.FC = () => {
       u.address?.toLowerCase().includes(search.toLowerCase())
   );
 
+  const adminsCount = users.filter((u) => u.role === 'admin').length;
+
   return (
     <div className="space-y-6 text-right" dir="rtl">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-stone-200 shadow-2xs">
@@ -162,17 +183,7 @@ export const UsersManagementPage: React.FC = () => {
               إدارة المستخدمين والحسابات المسجلة ({users.length})
             </h1>
             <p className="text-xs text-stone-500 mt-0.5 flex flex-wrap items-center gap-2">
-              <span>معرف حساب الإدارة المعتمد (UID):</span>
-              <span
-                className="font-mono font-bold text-[#1b5e20] bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200"
-                dir="ltr"
-              >
-                {BOOTSTRAP_ADMIN_UID}
-              </span>
-              <span className="text-stone-400">|</span>
-              <span className="font-mono text-stone-600" dir="ltr">
-                {BOOTSTRAP_ADMIN_EMAIL}
-              </span>
+              <span>جميع حسابات الإدارة ({adminsCount}) والطلاب محفوظة ومؤمّنة في قاعدة البيانات</span>
             </p>
           </div>
         </div>
@@ -196,7 +207,7 @@ export const UsersManagementPage: React.FC = () => {
       >
         <div className="flex items-center gap-2 text-sm font-black text-[#1b5e20]">
           <UserPlus className="w-4 h-4" />
-          <span>إضافة أو اعتماد حساب إدارة جديد (برقم المعرف UID أو البريد الإلكتروني)</span>
+          <span>إضافة أو تحديث حساب إدارة في قاعدة البيانات (مع تشفير كلمة المرور)</span>
         </div>
 
         {successMsg && (
@@ -206,7 +217,7 @@ export const UsersManagementPage: React.FC = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <input
             type="text"
             value={newAdminName}
@@ -219,7 +230,15 @@ export const UsersManagementPage: React.FC = () => {
             required
             value={newAdminIdentifier}
             onChange={(e) => setNewAdminIdentifier(e.target.value)}
-            placeholder="معرف الحساب (UID) أو البريد الإلكتروني"
+            placeholder="البريد الإلكتروني أو UID"
+            dir="ltr"
+            className="px-4 py-2.5 rounded-xl border border-stone-300 text-xs text-left font-mono"
+          />
+          <input
+            type="password"
+            value={newAdminPass}
+            onChange={(e) => setNewAdminPass(e.target.value)}
+            placeholder="كلمة المرور الجديدة (اختياري)"
             dir="ltr"
             className="px-4 py-2.5 rounded-xl border border-stone-300 text-xs text-left font-mono"
           />
@@ -228,7 +247,7 @@ export const UsersManagementPage: React.FC = () => {
             disabled={addingAdmin}
             className="px-5 py-2.5 rounded-xl bg-[#1b5e20] hover:bg-[#144519] text-[#facc15] font-bold text-xs transition cursor-pointer disabled:opacity-50"
           >
-            {addingAdmin ? 'جاري الاعتماد...' : 'اعتماد كمدير للنظام'}
+            {addingAdmin ? 'جاري الحفظ...' : 'حفظ في قاعدة البيانات'}
           </button>
         </div>
       </form>

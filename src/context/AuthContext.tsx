@@ -64,11 +64,20 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Official primary admin account identifiers
-export const BOOTSTRAP_ADMIN_UID = '5BSXFscriahrJ4npUvT4GOWJQbo1';
-export const BOOTSTRAP_ADMIN_EMAIL = 'abdulhalimalghabry@gmail.com';
-
 const STORAGE_KEY = 'noor_session_user';
+
+/**
+ * Cryptographic SHA-256 password hash using Web Crypto API.
+ * Ensures plaintext passwords are NEVER stored in code or database.
+ */
+export async function hashPassword(password: string): Promise<string> {
+  const input = 'noor-islam-salt-v1:' + password.trim();
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 // Safe deterministic ID helper for email-based keys (never fails on Unicode)
 export function generateEmailUid(email: string): string {
@@ -82,7 +91,7 @@ export function generateEmailUid(email: string): string {
   return `usr-${safeAscii}-${Math.abs(hash).toString(36)}`;
 }
 
-function generateEmailAdminKey(email: string): string {
+export function generateEmailAdminKey(email: string): string {
   const clean = email.toLowerCase().trim();
   let hash = 0;
   for (let i = 0; i < clean.length; i++) {
@@ -93,18 +102,21 @@ function generateEmailAdminKey(email: string): string {
   return `email-${safeAscii}-${Math.abs(hash).toString(36)}`;
 }
 
-function saveLocalSession(profile: {
-  uid: string;
-  email: string;
-  fullName: string;
-  phone: string;
-  guardianRelation?: string;
-  gender?: 'male' | 'female';
-  address?: string;
-  role: UserRole;
-  authProvider?: 'password' | 'google';
-  profileCompleted?: boolean;
-}) {
+function saveLocalSession(
+  profile: {
+    uid: string;
+    email: string;
+    fullName: string;
+    phone: string;
+    guardianRelation?: string;
+    gender?: 'male' | 'female';
+    address?: string;
+    role: UserRole;
+    authProvider?: 'password' | 'google';
+    profileCompleted?: boolean;
+  },
+  verifiedToken?: string
+) {
   try {
     localStorage.setItem(
       STORAGE_KEY,
@@ -120,6 +132,7 @@ function saveLocalSession(profile: {
         role: profile.role,
         authProvider: profile.authProvider || 'password',
         profileCompleted: profile.profileCompleted ?? true,
+        verifiedToken: verifiedToken || '',
       })
     );
   } catch {
@@ -133,10 +146,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [role, setRole] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
-  // Prevents onAuthStateChanged from racing with explicit register / login / loginWithGoogle actions
   const authActionInProgressRef = useRef<boolean>(false);
 
-  // Holds pending registration fields during account creation so nothing is ever lost
   const pendingRegistrationRef = useRef<{
     fullName: string;
     email: string;
@@ -146,23 +157,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     address: string;
   } | null>(null);
 
-  const checkIsAdminAccount = async (email?: string | null, uid?: string): Promise<boolean> => {
-    if (uid && uid.trim() === BOOTSTRAP_ADMIN_UID) {
-      return true;
-    }
-    const clean = email ? email.toLowerCase().trim() : '';
-    if (clean && clean === BOOTSTRAP_ADMIN_EMAIL.toLowerCase().trim()) {
-      return true;
-    }
+  /**
+   * Checks whether a user is an Admin strictly by querying the Firestore database
+   * ('admins' and 'users' collections) — no hardcoded emails or UIDs in source code.
+   */
+  const checkIsAdminInDatabase = async (
+    email?: string | null,
+    uid?: string
+  ): Promise<boolean> => {
+    const cleanEmail = email ? email.toLowerCase().trim() : '';
     try {
       if (uid) {
         const adminDoc = await getDoc(doc(db, 'admins', uid));
         if (adminDoc.exists()) return true;
+
+        const userDoc = await getDoc(doc(db, 'users', uid));
+        if (userDoc.exists() && userDoc.data()?.role === 'admin') return true;
       }
-      if (clean) {
-        const emailKey = generateEmailAdminKey(clean);
+      if (cleanEmail) {
+        const emailKey = generateEmailAdminKey(cleanEmail);
         const preAssignedAdmin = await getDoc(doc(db, 'admins', emailKey));
         if (preAssignedAdmin.exists()) return true;
+
+        const adminQuery = query(
+          collection(db, 'admins'),
+          where('email', '==', cleanEmail)
+        );
+        const adminSnap = await getDocs(adminQuery);
+        if (!adminSnap.empty) return true;
       }
     } catch {
       // ignore lookup error
@@ -170,37 +192,110 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return false;
   };
 
-  // Helper to find existing user profile in Firestore by UID or Email
-  const findExistingFirestoreUser = async (
-    uid: string,
-    email?: string | null
-  ): Promise<{ docId: string; data: UserProfile } | null> => {
+  /**
+   * Finds an existing user or admin record in Firestore by UID or Email.
+   */
+  const findExistingFirestoreAccount = async (
+    email: string,
+    uidHint?: string
+  ): Promise<{
+    docId: string;
+    data: UserProfile;
+    passwordHash?: string;
+  } | null> => {
+    const cleanEmail = email.trim();
+    const emailLower = cleanEmail.toLowerCase();
+
     try {
-      const directSnap = await getDoc(doc(db, 'users', uid));
-      if (directSnap.exists()) {
-        return { docId: uid, data: directSnap.data() as UserProfile };
+      // 1. Check direct UID if provided
+      if (uidHint) {
+        const directSnap = await getDoc(doc(db, 'users', uidHint));
+        if (directSnap.exists()) {
+          const data = directSnap.data() as UserProfile;
+          return {
+            docId: directSnap.id,
+            data,
+            passwordHash: data.passwordHash,
+          };
+        }
       }
 
-      if (email && email.trim()) {
-        const cleanEmail = email.trim();
-        const emailUid = generateEmailUid(cleanEmail);
-        if (emailUid !== uid) {
-          const emailUidSnap = await getDoc(doc(db, 'users', emailUid));
-          if (emailUidSnap.exists()) {
-            return { docId: emailUid, data: emailUidSnap.data() as UserProfile };
-          }
-        }
+      // 2. Query 'users' collection by exact email or lowercase email
+      const qExact = query(collection(db, 'users'), where('email', '==', cleanEmail));
+      const snapExact = await getDocs(qExact);
+      if (!snapExact.empty) {
+        // Prefer document with role === 'admin' or passwordHash if multiple exist
+        const chosen =
+          snapExact.docs.find((d) => d.data().role === 'admin' && d.data().passwordHash) ||
+          snapExact.docs.find((d) => d.data().passwordHash) ||
+          snapExact.docs[0];
+        const data = chosen.data() as UserProfile;
+        return {
+          docId: chosen.id,
+          data,
+          passwordHash: data.passwordHash,
+        };
+      }
 
-        const q = query(collection(db, 'users'), where('email', '==', cleanEmail));
-        const qSnap = await getDocs(q);
-        if (!qSnap.empty) {
-          const firstDoc = qSnap.docs[0];
-          return { docId: firstDoc.id, data: firstDoc.data() as UserProfile };
+      if (emailLower !== cleanEmail) {
+        const qLower = query(collection(db, 'users'), where('email', '==', emailLower));
+        const snapLower = await getDocs(qLower);
+        if (!snapLower.empty) {
+          const chosen =
+            snapLower.docs.find((d) => d.data().role === 'admin' && d.data().passwordHash) ||
+            snapLower.docs.find((d) => d.data().passwordHash) ||
+            snapLower.docs[0];
+          const data = chosen.data() as UserProfile;
+          return {
+            docId: chosen.id,
+            data,
+            passwordHash: data.passwordHash,
+          };
         }
+      }
+
+      // 3. Check deterministic email UID in 'users'
+      const emailUid = generateEmailUid(emailLower);
+      const emailUidSnap = await getDoc(doc(db, 'users', emailUid));
+      if (emailUidSnap.exists()) {
+        const data = emailUidSnap.data() as UserProfile;
+        return {
+          docId: emailUidSnap.id,
+          data,
+          passwordHash: data.passwordHash,
+        };
+      }
+
+      // 4. Also check 'admins' collection by email
+      const adminQuery = query(collection(db, 'admins'), where('email', '==', emailLower));
+      const adminSnap = await getDocs(adminQuery);
+      if (!adminSnap.empty) {
+        const adminDoc = adminSnap.docs[0];
+        const adminData = adminDoc.data();
+        const uid = adminData.uid || adminDoc.id;
+        const userDocSnap = await getDoc(doc(db, 'users', uid));
+        const userData = userDocSnap.exists()
+          ? (userDocSnap.data() as UserProfile)
+          : ({
+              uid,
+              fullName: adminData.fullName || 'إدارة مركز نور الإسلام',
+              email: emailLower,
+              phone: '',
+              role: 'admin',
+              profileCompleted: true,
+              passwordHash: adminData.passwordHash,
+            } as UserProfile);
+
+        return {
+          docId: uid,
+          data: { ...userData, role: 'admin' },
+          passwordHash: userData.passwordHash || adminData.passwordHash,
+        };
       }
     } catch (err) {
-      console.warn('Lookup user in Firestore note:', err);
+      console.warn('Firestore account lookup note:', err);
     }
+
     return null;
   };
 
@@ -208,55 +303,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user: User,
     providerHint?: 'google' | 'password'
   ): Promise<{ role: UserRole; profile: UserProfile }> => {
-    const userDocRef = doc(db, 'users', user.uid);
-    const isElevated = await checkIsAdminAccount(user.email, user.uid);
-    const pending = pendingRegistrationRef.current;
+    const existingByEmailOrUid = user.email
+      ? await findExistingFirestoreAccount(user.email, user.uid)
+      : null;
 
-    // Also check localStorage for any cached fields for this user
-    let cachedLocal: Record<string, any> | null = null;
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (
-          parsed?.uid === user.uid ||
-          (user.email && parsed?.email?.toLowerCase() === user.email.toLowerCase())
-        ) {
-          cachedLocal = parsed;
-        }
-      }
-    } catch {
-      // ignore
-    }
+    const targetUid = existingByEmailOrUid?.docId || user.uid;
+    const userDocRef = doc(db, 'users', targetUid);
+    const isElevated = await checkIsAdminInDatabase(user.email, targetUid);
+    const pending = pendingRegistrationRef.current;
 
     try {
       const snap = await getDoc(userDocRef);
 
       if (snap.exists()) {
         const data = snap.data() as UserProfile;
-        const resolvedRole: UserRole = isElevated ? 'admin' : (data.role || 'student');
+        const resolvedRole: UserRole = isElevated ? 'admin' : data.role || 'student';
 
         const mergedFullName =
           data.fullName ||
           pending?.fullName ||
-          cachedLocal?.fullName ||
-          cachedLocal?.displayName ||
           user.displayName ||
           '';
         const mergedPhone =
-          data.phone || pending?.phone || cachedLocal?.phone || user.phoneNumber || '';
+          data.phone || pending?.phone || user.phoneNumber || '';
         const mergedRelation =
           data.guardianRelation ||
           pending?.guardianRelation ||
-          cachedLocal?.guardianRelation ||
           (resolvedRole === 'admin' ? 'إدارة المركز' : 'طالب متقدم للتسجيل');
-        const mergedGender =
-          data.gender || pending?.gender || cachedLocal?.gender || 'male';
+        const mergedGender = data.gender || pending?.gender || 'male';
         const mergedAddress =
-          data.address ||
-          pending?.address ||
-          cachedLocal?.address ||
-          'مويالي - إثيوبيا';
+          data.address || pending?.address || 'مويالي - إثيوبيا';
 
         const isGoogleProvider =
           providerHint === 'google' ||
@@ -266,13 +342,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const hasBasicInfo =
           resolvedRole === 'admin' ||
-          Boolean(
-            mergedFullName.trim().length >= 2 && mergedPhone.trim().length >= 5
-          );
+          Boolean(mergedFullName.trim().length >= 2 && mergedPhone.trim().length >= 5);
 
         const updatedProfile: UserProfile = {
           ...data,
-          uid: user.uid,
+          uid: targetUid,
           email: user.email || data.email || '',
           fullName: mergedFullName,
           phone: mergedPhone,
@@ -302,20 +376,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           { merge: true }
         );
 
-        if (resolvedRole === 'admin') {
-          await setDoc(
-            doc(db, 'admins', user.uid),
-            {
-              uid: user.uid,
-              email: user.email || data.email || '',
-              role: 'admin',
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true }
-          ).catch(() => {});
-        }
-
-        saveLocalSession(updatedProfile);
+        saveLocalSession(updatedProfile, data.passwordHash);
         setUserProfile(updatedProfile);
         setRole(resolvedRole);
         return { role: resolvedRole, profile: updatedProfile };
@@ -328,28 +389,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const mergedFullName =
           pending?.fullName ||
-          cachedLocal?.fullName ||
-          cachedLocal?.displayName ||
           user.displayName ||
           (initialRole === 'admin' ? 'إدارة مركز نور الإسلام' : '');
-        const mergedPhone =
-          pending?.phone || cachedLocal?.phone || user.phoneNumber || '';
+        const mergedPhone = pending?.phone || user.phoneNumber || '';
         const mergedRelation =
           pending?.guardianRelation ||
-          cachedLocal?.guardianRelation ||
           (initialRole === 'admin' ? 'إدارة المركز' : 'طالب متقدم للتسجيل');
-        const mergedGender = pending?.gender || cachedLocal?.gender || 'male';
-        const mergedAddress =
-          pending?.address || cachedLocal?.address || 'مويالي - إثيوبيا';
+        const mergedGender = pending?.gender || 'male';
+        const mergedAddress = pending?.address || 'مويالي - إثيوبيا';
 
         const isCompleted =
           initialRole === 'admin' ||
           Boolean(mergedFullName.trim().length >= 2 && mergedPhone.trim().length >= 5);
 
         const newProfile: UserProfile = {
-          uid: user.uid,
+          uid: targetUid,
           fullName: mergedFullName,
-          email: user.email || pending?.email || cachedLocal?.email || '',
+          email: user.email || pending?.email || '',
           phone: mergedPhone,
           guardianRelation: mergedRelation,
           gender: mergedGender,
@@ -363,19 +419,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         await setDoc(userDocRef, newProfile, { merge: true });
 
-        if (initialRole === 'admin') {
-          await setDoc(
-            doc(db, 'admins', user.uid),
-            {
-              uid: user.uid,
-              email: user.email || '',
-              role: 'admin',
-              createdAt: serverTimestamp(),
-            },
-            { merge: true }
-          ).catch(() => {});
-        }
-
         saveLocalSession(newProfile);
         setUserProfile(newProfile);
         setRole(initialRole);
@@ -385,7 +428,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.error('Error fetching/creating user profile in Firestore:', err);
       const fallbackRole: UserRole = isElevated ? 'admin' : 'student';
       const fallbackProfile: UserProfile = {
-        uid: user.uid,
+        uid: targetUid,
         fullName: pending?.fullName || user.displayName || '',
         email: user.email || pending?.email || '',
         phone: pending?.phone || user.phoneNumber || '',
@@ -410,85 +453,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved);
         if (parsed?.uid) {
-          const isPrimaryAdmin =
-            parsed.uid === BOOTSTRAP_ADMIN_UID ||
-            parsed.email?.toLowerCase().trim() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase().trim();
-          const resolvedRole: UserRole = isPrimaryAdmin ? 'admin' : (parsed.role || 'student');
-          const simUser = {
-            uid: parsed.uid,
-            email: parsed.email || '',
-            displayName: parsed.fullName || parsed.displayName || '',
-            phoneNumber: parsed.phone || '',
-            emailVerified: true,
-            isAnonymous: false,
-          } as unknown as User;
-
-          setCurrentUser(simUser);
-          setRole(resolvedRole);
-
-          const initialLocalProfile: UserProfile = {
-            uid: parsed.uid,
-            fullName: parsed.fullName || parsed.displayName || '',
-            email: parsed.email || '',
-            phone: parsed.phone || '',
-            guardianRelation: parsed.guardianRelation || 'طالب متقدم للتسجيل',
-            gender: parsed.gender || 'male',
-            address: parsed.address || 'مويالي - إثيوبيا',
-            role: resolvedRole,
-            authProvider: parsed.authProvider || 'password',
-            profileCompleted: parsed.profileCompleted ?? true,
-          };
-          setUserProfile(initialLocalProfile);
-
-          // Always verify & persist local session in Firestore 'users' collection
+          // Verify the saved session against Firestore database (never trust localStorage blindly)
           getDoc(doc(db, 'users', parsed.uid))
             .then(async (s) => {
-              if (s.exists()) {
-                const p = s.data() as UserProfile;
-                const finalRole: UserRole = isPrimaryAdmin ? 'admin' : (p.role || 'student');
-                const synced: UserProfile = {
-                  ...initialLocalProfile,
-                  ...p,
-                  uid: parsed.uid,
-                  fullName: p.fullName || initialLocalProfile.fullName,
-                  email: p.email || initialLocalProfile.email,
-                  phone: p.phone || initialLocalProfile.phone,
-                  role: finalRole,
-                  profileCompleted:
-                    finalRole === 'admin' ||
-                    Boolean(
-                      (p.fullName || initialLocalProfile.fullName) &&
-                        (p.phone || initialLocalProfile.phone)
-                    ),
-                };
-                setUserProfile(synced);
-                setRole(finalRole);
-                // Ensure Firestore has any missing fields from local session
-                await setDoc(
-                  doc(db, 'users', parsed.uid),
-                  {
-                    ...synced,
-                    updatedAt: serverTimestamp(),
-                  },
-                  { merge: true }
-                ).catch(() => {});
-              } else {
-                // Document was missing in Firestore! Immediately create it so no account is ever lost
-                await setDoc(
-                  doc(db, 'users', parsed.uid),
-                  {
-                    ...initialLocalProfile,
-                    createdAt: serverTimestamp(),
-                    updatedAt: serverTimestamp(),
-                  },
-                  { merge: true }
-                ).catch(console.warn);
+              if (!s.exists()) {
+                localStorage.removeItem(STORAGE_KEY);
+                setCurrentUser(null);
+                setUserProfile(null);
+                setRole(null);
+                setLoading(false);
+                return;
               }
+
+              const dbUser = s.data() as UserProfile;
+              const isDbAdmin = await checkIsAdminInDatabase(dbUser.email, parsed.uid);
+              const verifiedRole: UserRole = isDbAdmin ? 'admin' : dbUser.role || 'student';
+
+              // If the user in Firestore has a passwordHash, ensure the saved session token matches
+              if (
+                dbUser.passwordHash &&
+                parsed.authProvider !== 'google' &&
+                parsed.verifiedToken !== dbUser.passwordHash
+              ) {
+                localStorage.removeItem(STORAGE_KEY);
+                setCurrentUser(null);
+                setUserProfile(null);
+                setRole(null);
+                setLoading(false);
+                return;
+              }
+
+              const syncedProfile: UserProfile = {
+                ...dbUser,
+                uid: parsed.uid,
+                role: verifiedRole,
+                profileCompleted:
+                  verifiedRole === 'admin' ||
+                  Boolean(dbUser.fullName?.trim() && dbUser.phone?.trim()),
+              };
+
+              const simUser = {
+                uid: parsed.uid,
+                email: syncedProfile.email || '',
+                displayName: syncedProfile.fullName || '',
+                phoneNumber: syncedProfile.phone || '',
+                emailVerified: true,
+                isAnonymous: false,
+              } as unknown as User;
+
+              setCurrentUser(simUser);
+              setUserProfile(syncedProfile);
+              setRole(verifiedRole);
+              setLoading(false);
             })
-            .catch(console.warn);
+            .catch(() => {
+              setLoading(false);
+            });
         }
-      } catch (err) {
-        console.warn('Could not parse local session:', err);
+      } catch {
+        localStorage.removeItem(STORAGE_KEY);
       }
     }
 
@@ -509,7 +532,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const timeout = setTimeout(() => {
       setLoading(false);
-    }, 1200);
+    }, 1500);
 
     return () => {
       unsubscribe();
@@ -517,128 +540,120 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
+  /**
+   * Strict Login with Email & Password:
+   * Verifies password hash directly against the Firestore database ('users' & 'admins').
+   * Rejects ANY password that does not match the stored passwordHash.
+   */
   const login = async (email: string, pass: string): Promise<UserRole> => {
     const cleanEmail = email.trim();
-    const emailLower = cleanEmail.toLowerCase();
-    const isBootstrap = emailLower === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
+    const cleanPass = pass.trim();
+
+    if (!cleanEmail || !cleanPass) {
+      const err = new Error('يرجى إدخال البريد الإلكتروني وكلمة المرور.') as Error & {
+        code?: string;
+      };
+      err.code = 'auth/invalid-credential';
+      throw err;
+    }
 
     authActionInProgressRef.current = true;
     try {
-      const cred = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-      setCurrentUser(cred.user);
-      const res = await fetchUserProfile(cred.user, 'password');
-      return res.role;
-    } catch (authErr: unknown) {
-      const errStr = authErr instanceof Error ? authErr.message : String(authErr);
-      const errCode = (authErr as { code?: string })?.code || '';
+      const inputPasswordHash = await hashPassword(cleanPass);
 
-      if (
-        isBootstrap &&
-        pass.length >= 6 &&
-        (errStr.includes('auth/user-not-found') ||
-          errStr.includes('auth/invalid-credential') ||
-          errCode.includes('auth/user-not-found') ||
-          errCode.includes('auth/invalid-credential'))
-      ) {
-        try {
-          const created = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
-          await updateProfile(created.user, { displayName: 'إدارة مركز نور الإسلام' }).catch(() => {});
-          setCurrentUser(created.user);
-          const res = await fetchUserProfile(created.user, 'password');
-          return res.role;
-        } catch {
-          // continue to Firestore lookup fallback below
+      // 1. Look up the user/admin account in the Firestore database
+      const existingAccount = await findExistingFirestoreAccount(cleanEmail);
+
+      // 2. If the account exists in Firestore and has a stored passwordHash,
+      //    strictly enforce that the entered password matches that exact hash!
+      if (existingAccount && existingAccount.passwordHash) {
+        if (inputPasswordHash !== existingAccount.passwordHash) {
+          const invalidErr = new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة.') as Error & {
+            code?: string;
+          };
+          invalidErr.code = 'auth/invalid-credential';
+          throw invalidErr;
         }
-      }
 
-      // Check if user already exists in Firestore 'users' collection
-      const fallbackUid = isBootstrap ? BOOTSTRAP_ADMIN_UID : generateEmailUid(emailLower);
-      const existingFirestoreUser = await findExistingFirestoreUser(fallbackUid, cleanEmail);
-
-      const isProviderOrCredentialFallback =
-        Boolean(existingFirestoreUser) ||
-        isBootstrap ||
-        errStr.includes('auth/operation-not-allowed') ||
-        errStr.includes('auth/admin-restricted-operation') ||
-        errStr.includes('auth/configuration-not-found') ||
-        errStr.includes('auth/unauthorized-domain') ||
-        errStr.includes('auth/internal-error') ||
-        errCode.includes('auth/operation-not-allowed') ||
-        errCode.includes('auth/configuration-not-found');
-
-      if (isProviderOrCredentialFallback) {
-        await signOut(auth).catch(() => {});
-        const uid = existingFirestoreUser?.docId || fallbackUid;
-        const isElevated = await checkIsAdminAccount(emailLower, uid);
-        const assignedRole: UserRole = isElevated
+        // Password hash matched the database record!
+        const uid = existingAccount.docId;
+        const isDbAdmin = await checkIsAdminInDatabase(cleanEmail, uid);
+        const resolvedRole: UserRole = isDbAdmin
           ? 'admin'
-          : existingFirestoreUser?.data.role || 'student';
+          : existingAccount.data.role || 'student';
 
-        let profile: UserProfile;
-
-        if (existingFirestoreUser) {
-          profile = {
-            ...existingFirestoreUser.data,
-            uid,
-            email: existingFirestoreUser.data.email || cleanEmail,
-            role: assignedRole,
-            profileCompleted:
-              assignedRole === 'admin' ||
-              Boolean(
-                existingFirestoreUser.data.fullName && existingFirestoreUser.data.phone
-              ),
-          };
-          await setDoc(
-            doc(db, 'users', uid),
-            {
-              ...profile,
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true }
-          );
-        } else {
-          profile = {
-            uid,
-            fullName: isElevated ? 'إدارة مركز نور الإسلام' : cleanEmail.split('@')[0],
-            email: cleanEmail,
-            phone: '',
-            guardianRelation: isElevated ? 'إدارة المركز' : 'طالب متقدم للتسجيل',
-            gender: 'male',
-            address: 'مويالي - إثيوبيا',
-            role: assignedRole,
-            authProvider: 'password',
-            profileCompleted: isElevated ? true : false,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          };
-          await setDoc(doc(db, 'users', uid), profile, { merge: true });
+        // Optionally sign in to Firebase Auth if Email/Password matches in Auth too
+        try {
+          await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+        } catch {
+          // Database passwordHash is already verified; continue with verified database session
         }
 
-        if (assignedRole === 'admin') {
-          await setDoc(
-            doc(db, 'admins', uid),
-            { uid, email: cleanEmail, role: 'admin', updatedAt: serverTimestamp() },
-            { merge: true }
-          ).catch(() => {});
-        }
-
-        const simulatedUser = {
+        const profile: UserProfile = {
+          ...existingAccount.data,
           uid,
-          email: cleanEmail,
+          email: existingAccount.data.email || cleanEmail,
+          role: resolvedRole,
+          authProvider: 'password',
+          profileCompleted:
+            resolvedRole === 'admin' ||
+            Boolean(
+              existingAccount.data.fullName?.trim() && existingAccount.data.phone?.trim()
+            ),
+          passwordHash: existingAccount.passwordHash,
+        };
+
+        await setDoc(
+          doc(db, 'users', uid),
+          {
+            ...profile,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        const verifiedUser = {
+          uid,
+          email: profile.email,
           displayName: profile.fullName,
           phoneNumber: profile.phone,
           emailVerified: true,
           isAnonymous: false,
         } as unknown as User;
 
-        saveLocalSession(profile);
-        setCurrentUser(simulatedUser);
+        saveLocalSession(profile, existingAccount.passwordHash);
+        setCurrentUser(verifiedUser);
         setUserProfile(profile);
-        setRole(profile.role);
-        return profile.role;
+        setRole(resolvedRole);
+        return resolvedRole;
       }
 
-      throw authErr;
+      // 3. If the account has no passwordHash in Firestore yet, verify via Firebase Auth
+      try {
+        const cred = await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+        const uid = existingAccount?.docId || cred.user.uid;
+        // Save the verified passwordHash in Firestore for future logins
+        await setDoc(
+          doc(db, 'users', uid),
+          {
+            uid,
+            email: cleanEmail,
+            passwordHash: inputPasswordHash,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+        setCurrentUser(cred.user);
+        const res = await fetchUserProfile(cred.user, 'password');
+        saveLocalSession(res.profile, inputPasswordHash);
+        return res.role;
+      } catch {
+        const invalidErr = new Error('البريد الإلكتروني أو كلمة المرور غير صحيحة.') as Error & {
+          code?: string;
+        };
+        invalidErr.code = 'auth/invalid-credential';
+        throw invalidErr;
+      }
     } finally {
       authActionInProgressRef.current = false;
     }
@@ -675,6 +690,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const emailLower = cleanEmail.toLowerCase();
     const cleanName = fullName.trim();
     const cleanPhone = phone.trim();
+    const cleanPass = pass.trim();
     const cleanRelation = extra?.guardianRelation || 'طالب متقدم للتسجيل';
     const cleanGender = extra?.gender || 'male';
     const cleanAddress = extra?.address?.trim() || 'مويالي - إثيوبيا';
@@ -690,6 +706,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     try {
+      // 1. Prevent overwriting any existing account (Admin or Student) in Firestore!
+      const existingAccount = await findExistingFirestoreAccount(cleanEmail);
+      if (existingAccount) {
+        const existsErr = new Error(
+          'هذا البريد الإلكتروني مسجل مسبقاً. يرجى تسجيل الدخول بدلاً من إنشاء حساب جديد.'
+        ) as Error & { code?: string };
+        existsErr.code = 'auth/email-already-in-use';
+        throw existsErr;
+      }
+
+      const passwordHash = await hashPassword(cleanPass);
+
       localStorage.removeItem(STORAGE_KEY);
       if (auth.currentUser) {
         await signOut(auth).catch(() => {});
@@ -698,13 +726,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let resolvedAuthUser: User | null = null;
 
       try {
-        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, pass);
+        const cred = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
         resolvedAuthUser = cred.user;
       } catch (createErr: unknown) {
         const errStr = createErr instanceof Error ? createErr.message : String(createErr);
         const errCode = (createErr as { code?: string })?.code || '';
 
-        // Reject only if email format or password length is invalid
         if (
           errStr.includes('auth/invalid-email') ||
           errCode.includes('auth/invalid-email') ||
@@ -712,20 +739,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           errCode.includes('auth/weak-password')
         ) {
           throw createErr;
-        }
-
-        // If email already exists in Firebase Auth, try signing in with the provided password
-        if (
-          errStr.includes('auth/email-already-in-use') ||
-          errCode.includes('auth/email-already-in-use')
-        ) {
-          try {
-            const signedIn = await signInWithEmailAndPassword(auth, cleanEmail, pass);
-            resolvedAuthUser = signedIn.user;
-          } catch {
-            // Even if sign-in with new password didn't match old Auth entry, we will still persist in Firestore below
-            resolvedAuthUser = null;
-          }
         }
       }
 
@@ -737,15 +750,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      const isBootstrap = emailLower === BOOTSTRAP_ADMIN_EMAIL.toLowerCase();
-      const uid = resolvedAuthUser
-        ? resolvedAuthUser.uid
-        : isBootstrap
-        ? BOOTSTRAP_ADMIN_UID
-        : generateEmailUid(emailLower);
-
-      const isElevated = await checkIsAdminAccount(emailLower, uid);
-      const assignedRole: UserRole = isElevated ? 'admin' : 'student';
+      const uid = resolvedAuthUser ? resolvedAuthUser.uid : generateEmailUid(emailLower);
+      const isPreAssignedAdmin = await checkIsAdminInDatabase(emailLower, uid);
+      const assignedRole: UserRole = isPreAssignedAdmin ? 'admin' : 'student';
 
       const profile: UserProfile = {
         uid,
@@ -758,29 +765,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: assignedRole,
         authProvider: 'password',
         profileCompleted: true,
+        passwordHash,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
 
-      // 1. Write user profile to Firestore 'users' collection
+      // Save new user account + passwordHash to Firestore 'users' collection
       await setDoc(doc(db, 'users', uid), profile, { merge: true });
 
-      // 2. If admin, also register in 'admins' collection
       if (assignedRole === 'admin') {
         await setDoc(
           doc(db, 'admins', uid),
           {
             uid,
-            email: cleanEmail,
+            email: emailLower,
             fullName: cleanName,
             role: 'admin',
+            passwordHash,
             createdAt: serverTimestamp(),
           },
           { merge: true }
         ).catch(() => {});
       }
 
-      // 3. Create welcome notification in Firestore 'notifications' collection
       await addDoc(collection(db, 'notifications'), {
         userId: uid,
         title: 'مرحبًا بك في البوابة الرسمية لمركز نور الإسلام 🎉',
@@ -791,7 +798,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: serverTimestamp(),
       }).catch(() => {});
 
-      // 4. Log account registration in 'adminLogs' so Admin sees a complete audit trail
       await addDoc(collection(db, 'adminLogs'), {
         adminId: uid,
         adminEmail: cleanEmail,
@@ -811,7 +817,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           isAnonymous: false,
         } as unknown as User);
 
-      saveLocalSession(profile);
+      saveLocalSession(profile, passwordHash);
       setCurrentUser(activeUserObj);
       setUserProfile(profile);
       setRole(assignedRole);
@@ -871,7 +877,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       createdAt: serverTimestamp(),
     }).catch(() => {});
 
-    saveLocalSession(updatedProfile);
+    saveLocalSession(updatedProfile, userProfile?.passwordHash);
     setUserProfile(updatedProfile);
   };
 
@@ -901,10 +907,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const isAdmin =
-    role === 'admin' ||
-    currentUser?.uid === BOOTSTRAP_ADMIN_UID ||
-    currentUser?.email?.toLowerCase().trim() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase().trim();
+  const isAdmin = role === 'admin';
   const isStudent = role === 'student';
 
   const needsProfileCompletion = Boolean(

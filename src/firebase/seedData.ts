@@ -360,47 +360,6 @@ export function mergeWithOfficialSettings(data?: Partial<CenterSettings> | null)
 
 export async function seedInitialDataIfNeeded(): Promise<void> {
   try {
-    // Ensure official admin UID (5BSXFscriahrJ4npUvT4GOWJQbo1) is registered as admin in Firestore
-    const primaryAdminUid = '5BSXFscriahrJ4npUvT4GOWJQbo1';
-    await setDoc(
-      doc(db, 'admins', primaryAdminUid),
-      {
-        uid: primaryAdminUid,
-        role: 'admin',
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
-    const adminUserRef = doc(db, 'users', primaryAdminUid);
-    const adminUserSnap = await getDoc(adminUserRef);
-    if (adminUserSnap.exists()) {
-      const existingData = adminUserSnap.data();
-      if (existingData.role !== 'admin') {
-        await setDoc(
-          adminUserRef,
-          {
-            role: 'admin',
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-      }
-    } else {
-      await setDoc(
-        adminUserRef,
-        {
-          uid: primaryAdminUid,
-          fullName: 'إدارة مركز نور الإسلام',
-          email: 'abdulhalimalghabry@gmail.com',
-          phone: '',
-          role: 'admin',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-    }
-
     const settingsDocRef = doc(db, 'settings', 'center');
     const settingsSnap = await getDoc(settingsDocRef);
     if (!settingsSnap.exists()) {

@@ -11,6 +11,7 @@ export interface UserProfile {
   address?: string;
   authProvider?: 'google' | 'password';
   profileCompleted?: boolean;
+  passwordHash?: string;
   createdAt?: any;
   updatedAt?: any;
 }
