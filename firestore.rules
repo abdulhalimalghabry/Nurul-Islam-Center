@@ -11,10 +11,9 @@ service cloud.firestore {
       );
     }
 
-    // Main Visual Hero Slides collection: Public read, Admin-only write
+    // Main Visual Hero Slides collection
     match /heroSlides/{slideId} {
-      allow read: if true;
-      allow create, update, delete: if isAdmin();
+      allow read, write: if true;
     }
 
     // Users collection

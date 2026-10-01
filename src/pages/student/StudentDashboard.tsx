@@ -48,28 +48,63 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       return;
     }
 
-    const q = query(
+    const byUidMap = new Map<string, Application>();
+    const byEmailMap = new Map<string, Application>();
+
+    const mergeAndSet = () => {
+      const combined = new Map<string, Application>([...byEmailMap, ...byUidMap]);
+      const list = Array.from(combined.values()).sort((a, b) => {
+        const tA = a.submittedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0;
+        const tB = b.submittedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0;
+        return tB - tA;
+      });
+      setApplications(list);
+      setLoading(false);
+    };
+
+    const qUid = query(
       collection(db, 'applications'),
       where('userId', '==', currentUser.uid)
     );
 
-    const unsubscribe = onSnapshot(
-      q,
+    const unsubUid = onSnapshot(
+      qUid,
       (snapshot) => {
-        const apps: Application[] = [];
+        byUidMap.clear();
         snapshot.forEach((d) => {
-          apps.push({ id: d.id, ...(d.data() as Omit<Application, 'id'>) });
+          byUidMap.set(d.id, { id: d.id, ...(d.data() as Omit<Application, 'id'>) });
         });
-        setApplications(apps);
-        setLoading(false);
+        mergeAndSet();
       },
       (error) => {
-        console.warn('Error fetching student applications:', error);
+        console.warn('Error fetching student applications by uid:', error);
         setLoading(false);
       }
     );
 
-    return () => unsubscribe();
+    let unsubEmail: (() => void) | null = null;
+    if (currentUser.email && currentUser.email.trim()) {
+      const qEmail = query(
+        collection(db, 'applications'),
+        where('email', '==', currentUser.email.trim())
+      );
+      unsubEmail = onSnapshot(
+        qEmail,
+        (snapshot) => {
+          byEmailMap.clear();
+          snapshot.forEach((d) => {
+            byEmailMap.set(d.id, { id: d.id, ...(d.data() as Omit<Application, 'id'>) });
+          });
+          mergeAndSet();
+        },
+        () => {}
+      );
+    }
+
+    return () => {
+      unsubUid();
+      if (unsubEmail) unsubEmail();
+    };
   }, [currentUser]);
 
   if (loading) {

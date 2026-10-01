@@ -17,7 +17,7 @@ import {
 } from '../../types';
 import {
   generateApplicationNumber,
-  convertFileToBase64,
+  uploadOrCompressDocument,
 } from '../../utils/helpers';
 import {
   User,
@@ -229,28 +229,35 @@ export const RegistrationForm: React.FC<RegistrationFormProps> = ({
     nameField: keyof ApplicationDocuments,
     file: File
   ) => {
-    if (file.size > 5 * 1024 * 1024) {
-      alert('حجم الملف يجب ألا يتجاوز 5 ميجابايت.');
+    setErrorMsg('');
+    if (file.size > 10 * 1024 * 1024) {
+      setErrorMsg('حجم الملف يجب ألا يتجاوز 10 ميجابايت.');
       return;
     }
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
+    const allowedTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/jpg',
+      'image/webp',
+      'application/pdf',
+    ];
     if (!allowedTypes.includes(file.type)) {
-      alert('نوع الملف غير مدعوم. يرجى رفع ملف بصيغة JPG أو PNG أو PDF.');
+      setErrorMsg('نوع الملف غير مدعوم. يرجى رفع ملف بصيغة JPG أو PNG أو WEBP أو PDF.');
       return;
     }
 
     setUploadingDoc(field);
     try {
-      const base64 = await convertFileToBase64(file);
+      const uploadedOrCompressed = await uploadOrCompressDocument(file, String(field));
       setDocuments((prev) => ({
         ...prev,
-        [field]: base64,
+        [field]: uploadedOrCompressed,
         [nameField]: file.name,
       }));
     } catch (err) {
       console.error('File read error:', err);
-      alert('تعذر قراءة الملف، يرجى المحاولة مرة أخرى.');
+      setErrorMsg('تعذر قراءة الملف، يرجى المحاولة مرة أخرى.');
     } finally {
       setUploadingDoc(null);
     }
@@ -280,28 +287,28 @@ export const RegistrationForm: React.FC<RegistrationFormProps> = ({
       const appData: Application = {
         applicationNumber: appNumber,
         userId: currentUser.uid,
-        studentName,
-        studentNameEn: studentNameEn || '',
+        studentName: studentName.trim(),
+        studentNameEn: studentNameEn.trim() || '',
         dateOfBirth,
         gender,
-        nationality,
-        nationalId,
-        phone,
-        email: email || currentUser.email || '',
-        address,
-        parentName,
-        parentPhone,
+        nationality: nationality.trim(),
+        nationalId: nationalId.trim(),
+        phone: phone.trim(),
+        email: (email || currentUser.email || userProfile?.email || '').trim(),
+        address: address.trim(),
+        parentName: parentName.trim(),
+        parentPhone: parentPhone.trim(),
         parentRelationship,
         stageId,
         stageName: stageObj?.name || 'المرحلة الابتدائية',
         targetGrade,
         classId: classId || '',
         className: classObj?.name || '',
-        previousSchool,
-        previousGrade,
-        lastAcademicResult,
+        previousSchool: previousSchool.trim(),
+        previousGrade: previousGrade.trim(),
+        lastAcademicResult: lastAcademicResult.trim(),
         hasPreviousStudyInCenter,
-        notes,
+        notes: notes.trim(),
         documents,
         status: 'submitted',
         submittedAt: serverTimestamp(),
@@ -309,18 +316,48 @@ export const RegistrationForm: React.FC<RegistrationFormProps> = ({
         updatedAt: serverTimestamp(),
       };
 
+      // 1. Save application in Firestore 'applications' collection
       await setDoc(doc(db, 'applications', appId), appData, { merge: true });
 
-      // Create notification for student
+      // 2. Also ensure the student's user profile is persisted in Firestore 'users' collection
+      await setDoc(
+        doc(db, 'users', currentUser.uid),
+        {
+          uid: currentUser.uid,
+          fullName: userProfile?.fullName || studentName.trim(),
+          email: (email || currentUser.email || userProfile?.email || '').trim(),
+          phone: phone.trim() || parentPhone.trim() || userProfile?.phone || '',
+          guardianRelation: userProfile?.guardianRelation || 'طالب متقدم للتسجيل',
+          gender: userProfile?.gender || gender,
+          address: address.trim() || userProfile?.address || 'مويالي - إثيوبيا',
+          role: userProfile?.role || 'student',
+          profileCompleted: true,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      ).catch(() => {});
+
+      // 3. Create notification for student in Firestore 'notifications' collection
       await addDoc(collection(db, 'notifications'), {
         userId: currentUser.uid,
-        title: 'تم استلام طلب التسجيل بنجاح',
-        message: `تم تقديم طلب التسجيل للطالب (${studentName}) برقم ${appNumber}. طلبك الآن في مرحلة المراجعة والتدقيق من قبل الإدارة.`,
+        title: 'تم استلام طلب التسجيل وحفظه في قاعدة البيانات بنجاح ✅',
+        message: `تم تقديم طلب التسجيل للطالب (${studentName.trim()}) برقم ${appNumber}. طلبك الآن في مرحلة المراجعة والتدقيق من قبل الإدارة.`,
         type: 'success',
         isRead: false,
         link: 'student-dashboard',
         createdAt: serverTimestamp(),
-      });
+      }).catch(() => {});
+
+      // 4. Record in 'adminLogs' collection
+      await addDoc(collection(db, 'adminLogs'), {
+        adminId: currentUser.uid,
+        adminEmail: (email || currentUser.email || '').trim(),
+        action: existingApplication ? 'تعديل طلب تسجيل طالب' : 'تقديم طلب تسجيل طالب جديد',
+        targetApplicationId: appId,
+        targetApplicationNumber: appNumber,
+        details: `تم حفظ طلب التسجيل للطالب (${studentName.trim()}) - المرحلة: ${stageObj?.name || ''} - الصف: ${targetGrade}`,
+        createdAt: serverTimestamp(),
+      }).catch(() => {});
 
       onSuccess({ ...appData, id: appId });
     } catch (err) {

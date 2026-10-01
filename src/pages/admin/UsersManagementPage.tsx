@@ -47,10 +47,16 @@ export const UsersManagementPage: React.FC = () => {
 
   const handleToggleRole = async (u: UserProfile) => {
     const nextRole: UserRole = u.role === 'admin' ? 'student' : 'admin';
-    await updateDoc(doc(db, 'users', u.uid), {
-      role: nextRole,
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      doc(db, 'users', u.uid),
+      {
+        ...u,
+        uid: u.uid,
+        role: nextRole,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
     if (nextRole === 'admin') {
       await setDoc(
         doc(db, 'admins', u.uid),

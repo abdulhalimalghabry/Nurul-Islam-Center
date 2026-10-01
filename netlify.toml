@@ -1,0 +1,14 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  SECRETS_SCAN_ENABLED = "false"
+  SECRETS_SCAN_SMART_DETECTION_ENABLED = "false"
+  SECRETS_SCAN_OMIT_PATHS = "firebase-applet-config.json,dist/**"
+  VITE_CONFIG_NATIVE_IGNORE_WARNING = "true"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

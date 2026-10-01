@@ -258,7 +258,11 @@ export const HeroSlidesManagementPage: React.FC<HeroSlidesManagementPageProps> =
         const batch = writeBatch(db);
         slides.forEach((s) => {
           if (s.id && s.id !== slideId && s.isFeatured) {
-            batch.update(doc(db, 'heroSlides', s.id), { isFeatured: false });
+            batch.set(
+              doc(db, 'heroSlides', s.id),
+              { isFeatured: false, updatedAt: serverTimestamp() },
+              { merge: true }
+            );
           }
         });
         await batch.commit();
@@ -284,28 +288,32 @@ export const HeroSlidesManagementPage: React.FC<HeroSlidesManagementPageProps> =
       };
 
       if (editingSlideId) {
-        await updateDoc(doc(db, 'heroSlides', editingSlideId), payload);
+        await setDoc(doc(db, 'heroSlides', editingSlideId), payload, { merge: true });
         await addDoc(collection(db, 'adminLogs'), {
           adminId: currentUser?.uid || '',
           adminEmail: currentUser?.email || '',
           action: 'تعديل شريحة في المحتوى الرئيسي',
           details: `تم تعديل الشريحة: ${finalTitle || contentType}`,
           createdAt: serverTimestamp(),
-        });
-        showNotice('success', 'تم حفظ التعديلات على الشريحة بنجاح');
+        }).catch(() => {});
+        showNotice('success', 'تم حفظ التعديلات على الشريحة في قاعدة البيانات بنجاح');
       } else {
-        await setDoc(doc(db, 'heroSlides', slideId), {
-          ...payload,
-          createdAt: serverTimestamp(),
-        });
+        await setDoc(
+          doc(db, 'heroSlides', slideId),
+          {
+            ...payload,
+            createdAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
         await addDoc(collection(db, 'adminLogs'), {
           adminId: currentUser?.uid || '',
           adminEmail: currentUser?.email || '',
           action: 'إضافة شريحة جديدة للمحتوى الرئيسي',
           details: `تم إضافة شريحة (${contentType}): ${finalTitle || 'صورة فقط'}`,
           createdAt: serverTimestamp(),
-        });
-        showNotice('success', 'تم إضافة الشريحة إلى الواجهة الرئيسية بنجاح');
+        }).catch(() => {});
+        showNotice('success', 'تم إضافة الشريحة وحفظها في قاعدة البيانات بنجاح');
       }
 
       setIsFormOpen(false);
@@ -323,10 +331,15 @@ export const HeroSlidesManagementPage: React.FC<HeroSlidesManagementPageProps> =
     if (!slide.id) return;
     try {
       const nextPublish = !slide.isPublished;
-      await updateDoc(doc(db, 'heroSlides', slide.id), {
-        isPublished: nextPublish,
-        updatedAt: serverTimestamp(),
-      });
+      await setDoc(
+        doc(db, 'heroSlides', slide.id),
+        {
+          ...slide,
+          isPublished: nextPublish,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
       showNotice(
         'success',
         nextPublish
@@ -348,15 +361,24 @@ export const HeroSlidesManagementPage: React.FC<HeroSlidesManagementPageProps> =
       if (nextFeatured) {
         slides.forEach((s) => {
           if (s.id && s.id !== slide.id && s.isFeatured) {
-            batch.update(doc(db, 'heroSlides', s.id), { isFeatured: false });
+            batch.set(
+              doc(db, 'heroSlides', s.id),
+              { isFeatured: false, updatedAt: serverTimestamp() },
+              { merge: true }
+            );
           }
         });
       }
 
-      batch.update(doc(db, 'heroSlides', slide.id), {
-        isFeatured: nextFeatured,
-        updatedAt: serverTimestamp(),
-      });
+      batch.set(
+        doc(db, 'heroSlides', slide.id),
+        {
+          ...slide,
+          isFeatured: nextFeatured,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
 
       await batch.commit();
       showNotice(
@@ -381,14 +403,24 @@ export const HeroSlidesManagementPage: React.FC<HeroSlidesManagementPageProps> =
 
     try {
       const batch = writeBatch(db);
-      batch.update(doc(db, 'heroSlides', slideA.id), {
-        order: targetIndex + 1,
-        updatedAt: serverTimestamp(),
-      });
-      batch.update(doc(db, 'heroSlides', slideB.id), {
-        order: index + 1,
-        updatedAt: serverTimestamp(),
-      });
+      batch.set(
+        doc(db, 'heroSlides', slideA.id),
+        {
+          ...slideA,
+          order: targetIndex + 1,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      batch.set(
+        doc(db, 'heroSlides', slideB.id),
+        {
+          ...slideB,
+          order: index + 1,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
       await batch.commit();
       showNotice('success', 'تم تحديث ترتيب ظهور الشرائح');
     } catch {
@@ -420,10 +452,15 @@ export const HeroSlidesManagementPage: React.FC<HeroSlidesManagementPageProps> =
       const batch = writeBatch(db);
       reordered.forEach((item, idx) => {
         if (item.id) {
-          batch.update(doc(db, 'heroSlides', item.id), {
-            order: idx + 1,
-            updatedAt: serverTimestamp(),
-          });
+          batch.set(
+            doc(db, 'heroSlides', item.id),
+            {
+              ...item,
+              order: idx + 1,
+              updatedAt: serverTimestamp(),
+            },
+            { merge: true }
+          );
         }
       });
       await batch.commit();

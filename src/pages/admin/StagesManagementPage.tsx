@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../firebase/config';
 import { StageItem, ClassItem } from '../../types';
 import { Layers, Edit2, Save, X, CheckCircle2 } from 'lucide-react';
@@ -32,11 +32,19 @@ export const StagesManagementPage: React.FC<StagesManagementPageProps> = ({ stag
         .split(/[,،\n]/)
         .map((g) => g.trim())
         .filter(Boolean);
-      await updateDoc(doc(db, 'stages', stageId), {
-        name: editName.trim(),
-        description: editDesc.trim(),
-        grades: parsedGrades,
-      });
+      const currentStage = stages.find((s) => s.id === stageId);
+      await setDoc(
+        doc(db, 'stages', stageId),
+        {
+          ...(currentStage || {}),
+          id: stageId,
+          name: editName.trim(),
+          description: editDesc.trim(),
+          grades: parsedGrades,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
       setEditingStageId(null);
       setSavedMsg(true);
       setTimeout(() => setSavedMsg(false), 3000);

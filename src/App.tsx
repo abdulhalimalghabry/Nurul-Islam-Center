@@ -206,36 +206,48 @@ const MainApp: React.FC = () => {
   // 4. Subscribe to Applications (For Admins)
   useEffect(() => {
     if (!isAdmin) return;
-    const unsub = onSnapshot(collection(db, 'applications'), (snap) => {
-      const list: Application[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...(d.data() as Omit<Application, 'id'>) }));
-      setApplications(list);
-    });
+    const unsub = onSnapshot(
+      collection(db, 'applications'),
+      (snap) => {
+        const list: Application[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...(d.data() as Omit<Application, 'id'>) }));
+        setApplications(list);
+      },
+      (err) => console.warn('Applications snapshot note:', err)
+    );
     return () => unsub();
   }, [isAdmin]);
 
   // 5. Subscribe to Enrolled Students (For Admins)
   useEffect(() => {
     if (!isAdmin) return;
-    const unsub = onSnapshot(collection(db, 'students'), (snap) => {
-      const list: StudentItem[] = [];
-      snap.forEach((d) => list.push({ id: d.id, ...(d.data() as Omit<StudentItem, 'id'>) }));
-      setStudents(list);
-    });
+    const unsub = onSnapshot(
+      collection(db, 'students'),
+      (snap) => {
+        const list: StudentItem[] = [];
+        snap.forEach((d) => list.push({ id: d.id, ...(d.data() as Omit<StudentItem, 'id'>) }));
+        setStudents(list);
+      },
+      (err) => console.warn('Students snapshot note:', err)
+    );
     return () => unsub();
   }, [isAdmin]);
 
   // 6. Subscribe to Registered Users (For Admins)
   useEffect(() => {
     if (!isAdmin) return;
-    const unsub = onSnapshot(collection(db, 'users'), (snap) => {
-      const list: UserProfile[] = [];
-      snap.forEach((d) => {
-        const data = d.data() as UserProfile;
-        list.push({ ...data, uid: data.uid || d.id });
-      });
-      setUsers(list);
-    });
+    const unsub = onSnapshot(
+      collection(db, 'users'),
+      (snap) => {
+        const list: UserProfile[] = [];
+        snap.forEach((d) => {
+          const data = d.data() as UserProfile;
+          list.push({ ...data, uid: data.uid || d.id });
+        });
+        setUsers(list);
+      },
+      (err) => console.warn('Users snapshot note:', err)
+    );
     return () => unsub();
   }, [isAdmin]);
 
@@ -260,7 +272,7 @@ const MainApp: React.FC = () => {
       applicationId: app.id,
       userId: app.userId,
       studentName: app.studentName,
-      studentNameEn: app.studentNameEn,
+      studentNameEn: app.studentNameEn || '',
       nationalId: app.nationalId,
       stageId,
       stageName: stageObj?.name || app.stageName || 'المرحلة المقررة',
@@ -276,26 +288,37 @@ const MainApp: React.FC = () => {
       updatedAt: serverTimestamp(),
     };
 
-    await setDoc(doc(db, 'students', studentDocId), studentRecord);
+    await setDoc(doc(db, 'students', studentDocId), studentRecord, { merge: true });
 
-    await updateDoc(doc(db, 'applications', app.id), {
-      status: 'accepted',
-      assignedStageId: stageId,
-      assignedStageName: stageObj?.name || app.stageName,
-      assignedGrade: grade,
-      assignedClassId: classId,
-      assignedClassName: classObj?.name || '',
-      studentIdGenerated: studentNumber,
-      adminNotes: notes,
-      reviewedAt: serverTimestamp(),
-      reviewedBy: userProfile?.fullName || currentUser?.email || 'الإدارة',
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      doc(db, 'applications', app.id),
+      {
+        status: 'accepted',
+        assignedStageId: stageId,
+        assignedStageName: stageObj?.name || app.stageName,
+        assignedGrade: grade,
+        assignedClassId: classId,
+        assignedClassName: classObj?.name || '',
+        studentIdGenerated: studentNumber,
+        adminNotes: notes,
+        reviewedAt: serverTimestamp(),
+        reviewedBy: userProfile?.fullName || currentUser?.email || 'الإدارة',
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
-    await updateDoc(doc(db, 'classes', classId), {
-      currentStudents: increment(1),
-      updatedAt: serverTimestamp(),
-    });
+    if (classId) {
+      await setDoc(
+        doc(db, 'classes', classId),
+        {
+          ...(classObj || {}),
+          currentStudents: increment(1),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
 
     await addDoc(collection(db, 'notifications'), {
       userId: app.userId,
@@ -320,14 +343,18 @@ const MainApp: React.FC = () => {
 
   const handleRejectApplication = async (app: Application, reason: string, notes: string) => {
     if (!app.id) return;
-    await updateDoc(doc(db, 'applications', app.id), {
-      status: 'rejected',
-      rejectionReason: reason,
-      adminNotes: notes,
-      reviewedAt: serverTimestamp(),
-      reviewedBy: userProfile?.fullName || currentUser?.email || 'الإدارة',
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      doc(db, 'applications', app.id),
+      {
+        status: 'rejected',
+        rejectionReason: reason,
+        adminNotes: notes,
+        reviewedAt: serverTimestamp(),
+        reviewedBy: userProfile?.fullName || currentUser?.email || 'الإدارة',
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     await addDoc(collection(db, 'notifications'), {
       userId: app.userId,
@@ -352,13 +379,17 @@ const MainApp: React.FC = () => {
 
   const handleRequestCorrection = async (app: Application, notes: string) => {
     if (!app.id) return;
-    await updateDoc(doc(db, 'applications', app.id), {
-      status: 'needs_correction',
-      adminNotes: notes,
-      reviewedAt: serverTimestamp(),
-      reviewedBy: userProfile?.fullName || currentUser?.email || 'الإدارة',
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      doc(db, 'applications', app.id),
+      {
+        status: 'needs_correction',
+        adminNotes: notes,
+        reviewedAt: serverTimestamp(),
+        reviewedBy: userProfile?.fullName || currentUser?.email || 'الإدارة',
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     await addDoc(collection(db, 'notifications'), {
       userId: app.userId,
@@ -383,12 +414,16 @@ const MainApp: React.FC = () => {
 
   const handleSetUnderReview = async (app: Application) => {
     if (!app.id) return;
-    await updateDoc(doc(db, 'applications', app.id), {
-      status: 'under_review',
-      reviewedAt: serverTimestamp(),
-      reviewedBy: userProfile?.fullName || currentUser?.email || 'الإدارة',
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      doc(db, 'applications', app.id),
+      {
+        status: 'under_review',
+        reviewedAt: serverTimestamp(),
+        reviewedBy: userProfile?.fullName || currentUser?.email || 'الإدارة',
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     await addDoc(collection(db, 'notifications'), {
       userId: app.userId,
@@ -418,20 +453,32 @@ const MainApp: React.FC = () => {
 
     const oldClassId = student.classId;
 
-    await updateDoc(doc(db, 'students', studentId), {
-      classId: newClassId,
-      className: newClass.name,
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      doc(db, 'students', studentId),
+      {
+        classId: newClassId,
+        className: newClass.name,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     if (oldClassId && oldClassId !== newClassId) {
-      await updateDoc(doc(db, 'classes', oldClassId), {
-        currentStudents: increment(-1),
-      });
+      await setDoc(
+        doc(db, 'classes', oldClassId),
+        {
+          currentStudents: increment(-1),
+        },
+        { merge: true }
+      );
     }
-    await updateDoc(doc(db, 'classes', newClassId), {
-      currentStudents: increment(1),
-    });
+    await setDoc(
+      doc(db, 'classes', newClassId),
+      {
+        currentStudents: increment(1),
+      },
+      { merge: true }
+    );
 
     await addDoc(collection(db, 'adminLogs'), {
       adminId: currentUser?.uid || '',
@@ -443,10 +490,16 @@ const MainApp: React.FC = () => {
   };
 
   const handleUpdateClass = async (classId: string, updates: Partial<ClassItem>) => {
-    await updateDoc(doc(db, 'classes', classId), {
-      ...updates,
-      updatedAt: serverTimestamp(),
-    });
+    const existingCls = classes.find((c) => c.id === classId);
+    await setDoc(
+      doc(db, 'classes', classId),
+      {
+        ...(existingCls || {}),
+        ...updates,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     await addDoc(collection(db, 'adminLogs'), {
       adminId: currentUser?.uid || '',
@@ -474,10 +527,14 @@ const MainApp: React.FC = () => {
   };
 
   const handleSaveSettings = async (newSettings: CenterSettings) => {
-    await setDoc(doc(db, 'settings', 'center'), {
-      ...newSettings,
-      updatedAt: serverTimestamp(),
-    });
+    await setDoc(
+      doc(db, 'settings', 'center'),
+      {
+        ...newSettings,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     await addDoc(collection(db, 'adminLogs'), {
       adminId: currentUser?.uid || '',
